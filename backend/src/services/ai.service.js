@@ -37,7 +37,9 @@ export async function generateJson({ system, user }, { retries = 2 } = {}) {
       });
       const choice = res.choices?.[0];
       if (choice?.finish_reason === 'length') {
-        throw new AppError(502, 'The model output was cut off. Lower CHUNK_CHARS or raise GROQ_MAX_TOKENS in backend/.env.');
+        const cut = new AppError(502, 'The model output was cut off. Lower CHUNK_CHARS or raise GROQ_MAX_TOKENS in backend/.env.');
+        cut.code = 'OUTPUT_TRUNCATED';
+        throw cut;
       }
       try {
         return parseJson(choice?.message?.content ?? '');

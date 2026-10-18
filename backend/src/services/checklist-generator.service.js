@@ -34,6 +34,34 @@ function mergeInto(merged, part) {
   }
 }
 
+
+const DOC_RE = /\[\[DOCUMENT id=\d+ name=".*?"\]\]/g;
+
+/** Split a chunk in two, keeping the document/page markers so sources stay traceable. */
+function splitChunk(text) {
+  let mid = text.lastIndexOf('\n\n', Math.floor(text.length / 2));
+  if (mid < text.length * 0.25) mid = text.indexOf('\n', Math.floor(text.length / 2));
+  if (mid <= 0) mid = Math.floor(text.length / 2);
+  const left = text.slice(0, mid);
+  let right = text.slice(mid).replace(/^\n+/, '');
+  const page = [...left.matchAll(/\[\[PAGE \d+\]\]/g)].pop();
+  if (page && !right.startsWith('[[PAGE')) right = `${page[0]}\n${right}`;
+  const doc = [...left.matchAll(DOC_RE)].pop();
+  if (doc && !right.startsWith('[[DOCUMENT')) right = `${doc[0]}\n${right}`;
+  return [left, right];
+}
+
+/** Generate for one chunk; if the model output is cut off, retry on two smaller halves. */
+async function processChunk(text, ctx, depth = 0) {
+  try {
+    return [await generateJson(buildGenerationPrompt({ ...ctx, chunk: text }))];
+  } catch (err) {
+    if (err.code !== 'OUTPUT_TRUNCATED' || depth >= 4 || text.length < 1200) throw err;
+    const [a, b] = splitChunk(text);
+    return [...(await processChunk(a, ctx, depth + 1)), ...(await processChunk(b, ctx, depth + 1))];
+  }
+}
+
 export async function generateDraft({ documents, checklistName, instructions, includeSuggestedQuestions, onProgress }) {
   const chunks = buildChunks(documents, env.chunkChars);
   if (!chunks.length) throw new AppError(422, 'The selected documents contain no text.');
@@ -45,8 +73,7 @@ export async function generateDraft({ documents, checklistName, instructions, in
 
   for (let i = 0; i < chunks.length; i++) {
     await onProgress?.(`Generating checklist — part ${i + 1} of ${chunks.length}`);
-    const prompt = buildGenerationPrompt({
-      chunk: chunks[i],
+    const parts = await processChunk(chunks[i], {
       index: i,
       total: chunks.length,
       checklistName,
@@ -54,7 +81,7 @@ export async function generateDraft({ documents, checklistName, instructions, in
       includeSuggestedQuestions,
       existingSections: merged.sections.map((s) => s.title),
     });
-    mergeInto(merged, await generateJson(prompt));
+    parts.forEach((p) => mergeInto(merged, p));
   }
 
   await onProgress?.('Validating generated checklist and verifying sources');
