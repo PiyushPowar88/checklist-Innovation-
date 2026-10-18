@@ -1,0 +1,8 @@
+node_modules
+.env
+.env.example
+dist
+backend/storage/uploads/*
+backend/storage/extracted/*
+!backend/storage/uploads/.gitkeep
+!backend/storage/extracted/.gitkeep
